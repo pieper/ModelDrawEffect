@@ -251,7 +251,7 @@ class ModelDrawEffectWidget:
     self.reloadButton.connect('clicked()', self.onReload)
 
     # reload and run specific tests
-    scenarios = ("Basic",)
+    scenarios = ("ThreeD","Slice","All")
     for scenario in scenarios:
       button = qt.QPushButton("Reload and Test %s" % scenario)
       button.toolTip = "Reload this module and then run the %s self test." % scenario
@@ -324,10 +324,111 @@ class ModelDrawEffectWidget:
       qt.QMessageBox.warning(slicer.util.mainWindow(),
           "Reload and Test", 'Exception!\n\n' + str(e) + "\n\nSee Python Console for Stack Trace")
 
+
+class SliceWebOverlay:
+
+  def __init__(self,sliceView):
+    self.styleObserverTags = []
+    self.sliceView = sliceView
+    self.addWebActor()
+
+  def __del__(self):
+    # remove observers and reset
+    for observee,tag in self.styleObserverTags:
+      observee.RemoveObserver(tag)
+    self.styleObserverTags = []
+
+  def setHtml(self,html):
+    self.webView.setHtml(html)
+
+  def onLoadFinished(self,worked):
+    print('worked: %s' % worked)
+    self.qImage.fill(0)
+    self.webView.render(self.qImage)
+    utils = slicer.qMRMLUtils()
+    utils.qImageToVtkImageData(self.qImage,self.vtkImage)
+    self.imageActor.SetInput(self.vtkImage)
+    self.sliceView.scheduleRender()
+    print('requested Render')
+
+  def processEvent(self, caller=None, event=None):
+    htmlFormat = """
+    <HEAD></HEAD> <BODY>
+      <div id="annotation"> <p style ="position: absolute;
+                display: inline;
+                top: 5;
+                left: 5;
+                border: 2px solid #777;
+                padding: 5px;
+                background-color: #fff;
+                opacity: 0.70" >
+                %s</p>
+      </div> </BODY>
+    """
+    pos = self.style.GetEventPosition()
+    self.setHtml(htmlFormat % 'got %s from %s at %s' % (event,caller.GetClassName(),str(pos)))
+    pass
+
+  def addWebActor(self):
+    self.webView = qt.QWebView()
+    self.webView.setWindowFlags(0x800)
+    self.webView.setStyleSheet('background:transparent;')
+
+    w, h = self.sliceView.width,self.sliceView.height
+    self.qImage = qt.QImage(w, h, qt.QImage.Format_ARGB32)
+    self.vtkImage = vtk.vtkImageData()
+
+    self.mapper = vtk.vtkImageMapper()
+    self.mapper.SetColorLevel(128)
+    self.mapper.SetColorWindow(255)
+    self.mapper.SetInput(self.vtkImage)
+    self.actor2D = vtk.vtkActor2D()
+    self.actor2D.SetMapper(self.mapper)
+
+    self.imageActor = vtk.vtkImageActor()
+    #self.imageActor.SetPosition(0,-1000,0)
+    self.renderWindow = self.sliceView.renderWindow()
+    self.renderer = self.renderWindow.GetRenderers().GetItemAsObject(0)
+    self.renderer.AddActor2D(self.actor2D)
+
+    globals()['slicer'].ia = self.imageActor
+
+    self.webView.connect('loadFinished(bool)', lambda worked : self.onLoadFinished(worked) )
+    #self.webView.page().connect('repaintRequested(QRect)', lambda rect : onLoadFinished(rect, self.webView, self.qImage) )
+
+    self.style = self.sliceView.interactor()
+    events = ("MouseMoveEvent", "EnterEvent", "LeaveEvent", "ModifiedEvent",)
+    for event in events:
+      tag = self.style.AddObserver(event, self.processEvent)
+      self.styleObserverTags.append([self.style,tag])
+
+  def removeWebActor(self):
+    self.renderer.RemoveActor(self.actor2D)
+    del(self.webView)
+    self.webView = None
+    self.sliceView.scheduleRender()
+
+
 class ModelDrawEffectTest(unittest.TestCase):
   """
   This is the test case for your scripted module.
   """
+
+  def __init__(self):
+    self.webView = None
+    self.htmlFormat = """
+    <HEAD></HEAD> <BODY>
+      <div id="annotation"> <p style ="position: absolute;
+                display: inline;
+                top: 5;
+                left: 5;
+                border: 2px solid #777;
+                padding: 5px;
+                background-color: #fff;
+                opacity: 0.70" >
+                Annotation Text %d</p>
+      </div> </BODY>
+    """
 
   def delayDisplay(self,message,msec=1000):
     """This utility method displays a small dialog and waits.
@@ -355,14 +456,52 @@ class ModelDrawEffectTest(unittest.TestCase):
     """Run as few or as many tests as needed here.
     """
     self.setUp()
-    if scenario == "Basic":
+    if scenario == "ThreeD":
       self.test_ModelDrawEffect1()
-    elif scenario == "Thin Plate":
-      self.test_ModelDrawEffect3()
+    elif scenario == "Slice":
+      self.test_ModelDrawEffect2()
     else:
       self.test_ModelDrawEffect1()
-      #self.test_ModelDrawEffect2()
-      #self.test_ModelDrawEffect3()
+      self.test_ModelDrawEffect2()
+
+  def onLoadFinished(self,worked):
+    print('worked: %s' % worked)
+    self.qImage.fill(0)
+    self.webView.render(self.qImage)
+    utils = slicer.qMRMLUtils()
+    utils.qImageToVtkImageData(self.qImage,self.vtkImage)
+    self.imageActor.SetInput(self.vtkImage)
+    self.threeDView.scheduleRender()
+    print('requested Render')
+
+  def addWebActor(self):
+    self.webView = qt.QWebView()
+    self.webView.setWindowFlags(0x800)
+    self.webView.setStyleSheet('background:transparent;')
+
+    self.qImage = qt.QImage(1000,1000, qt.QImage.Format_ARGB32)
+    self.vtkImage = vtk.vtkImageData()
+
+    lm = slicer.app.layoutManager()
+    redWidget = lm.sliceWidget('Red')
+    self.threeDView = lm.threeDWidget(0).threeDView()
+
+    self.imageActor = vtk.vtkImageActor()
+    self.imageActor.SetPosition(0,-1000,0)
+    self.renderWindow = self.threeDView.renderWindow()
+    self.renderer = self.renderWindow.GetRenderers().GetItemAsObject(0)
+    self.renderer.AddActor(self.imageActor)
+
+    globals()['slicer'].modules.ModelDrawEffectWidget.ia = self.imageActor
+
+    self.webView.connect('loadFinished(bool)', lambda worked : self.onLoadFinished(worked) )
+    #self.webView.page().connect('repaintRequested(QRect)', lambda rect : onLoadFinished(rect, self.webView, self.qImage) )
+
+  def removeWebActor(self):
+    self.renderer.RemoveActor(self.imageActor)
+    del(self.webView)
+    self.webView = None
+    self.threeDView.scheduleRender()
 
   def test_ModelDrawEffect1(self):
     """
@@ -376,12 +515,67 @@ class ModelDrawEffectTest(unittest.TestCase):
     import SampleData
     sampleDataLogic = SampleData.SampleDataLogic()
     mrHead = sampleDataLogic.downloadMRHead()
-    self.delayDisplay('Two data sets loaded')
+    self.delayDisplay('data set loaded')
 
     w = slicer.modules.ModelDrawEffectWidget
 
-    # TODO: write a test
-    #logic = ModelDrawEffectLogic()
+    qt.QWebSettings.globalSettings().setAttribute(qt.QWebSettings.DeveloperExtrasEnabled, True)
+
+    self.delayDisplay('adding web actor')
+    if not self.webView:
+      self.addWebActor()
+
+    self.threeDView.lookFromAxis(3,200)
+
+    self.delayDisplay('setting URL')
+    self.webView.setUrl(qt.QUrl('http://bl.ocks.org/1703449'))
+    self.delayDisplay('displaying URL',5000)
+
+
+    self.delayDisplay('displaying html',2000)
+    self.webView.setHtml(self.htmlFormat)
+
+    for i in xrange(20):
+      self.webView.setHtml(self.htmlFormat % i)
+      self.renderWindow.Render()
+      self.delayDisplay('displaying html %d' % i,10)
+
+    self.removeWebActor()
 
     self.delayDisplay('test_ModelDrawEffect1 passed!')
 
+
+  def test_ModelDrawEffect2(self):
+
+    self.delayDisplay('test_ModelDrawEffect2 running!',500)
+
+    import SampleData
+    sampleDataLogic = SampleData.SampleDataLogic()
+    mrHead = sampleDataLogic.downloadMRHead()
+
+    globals()['slicer'].ov = []
+
+    overlaysByLayoutName = {}
+    # get new slice nodes
+    layoutManager = slicer.app.layoutManager()
+    sliceNodeCount = slicer.mrmlScene.GetNumberOfNodesByClass('vtkMRMLSliceNode')
+    for nodeIndex in xrange(sliceNodeCount):
+      # find the widget for each node in scene
+      sliceNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, 'vtkMRMLSliceNode')
+      layoutName = sliceNode.GetLayoutName()
+      self.delayDisplay('adding to %s' % layoutName,200)
+      sliceWidget = layoutManager.sliceWidget(layoutName)
+      if sliceWidget:
+        # add obserservers and keep track of tags
+        overlay = SliceWebOverlay(sliceWidget.sliceView())
+        overlay.setHtml(self.htmlFormat % nodeIndex)
+        overlaysByLayoutName[layoutName] = overlay
+
+        globals()['slicer'].ov.append(overlay)
+
+    self.delayDisplay('Check them out!')
+    
+    for layoutName,overlay in overlaysByLayoutName.iteritems():
+      overlay.removeWebActor()
+
+    self.delayDisplay('test_ModelDrawEffect2 passed!')

@@ -227,11 +227,37 @@ class ModelDrawEffectWidget:
       self.setup()
       self.parent.show()
 
+    self.overlaysByLayoutName = None
+    self.htmlFormat = """
+    <HEAD></HEAD> <BODY>
+      <div id="annotation"> <p style ="position: absolute;
+                display: inline;
+                top: 5;
+                left: 5;
+                border: 2px solid #777;
+                padding: 5px;
+                background-color: #fff;
+                opacity: 0.70" >
+                Annotation Text %d</p>
+      </div> </BODY>
+    """
+
   def cleanup(self):
     pass
 
   def setup(self):
     """For development, add a reloadable section"""
+    #
+    # Add Overlays area
+    #
+    overlayCollapsibleButton = ctk.ctkCollapsibleButton()
+    overlayCollapsibleButton.text = "Overlays"
+    self.layout.addWidget(overlayCollapsibleButton)
+    overlayFormLayout = qt.QFormLayout(overlayCollapsibleButton)
+
+    self.overlaysCheck = qt.QCheckBox()
+    overlayFormLayout.addRow("Overlays", self.overlaysCheck)
+    self.overlaysCheck.connect("toggled(bool)", self.onOverlaysToggled)
 
     #
     # Reload and Test area
@@ -263,6 +289,28 @@ class ModelDrawEffectWidget:
 
   def exit(self):
     pass
+
+  def onOverlaysToggled(self):
+    if self.overlaysCheck.checked:
+      self.overlaysByLayoutName = {}
+      # get new slice nodes
+      layoutManager = slicer.app.layoutManager()
+      sliceNodeCount = slicer.mrmlScene.GetNumberOfNodesByClass('vtkMRMLSliceNode')
+      for nodeIndex in xrange(sliceNodeCount):
+        # find the widget for each node in scene
+        sliceNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, 'vtkMRMLSliceNode')
+        layoutName = sliceNode.GetLayoutName()
+        sliceWidget = layoutManager.sliceWidget(layoutName)
+        if sliceWidget:
+          # add obserservers and keep track of tags
+          overlay = SliceWebOverlay(sliceWidget.sliceView())
+          overlay.setHtml(self.htmlFormat % nodeIndex)
+          self.overlaysByLayoutName[layoutName] = overlay
+    else:
+      for layoutName,overlay in self.overlaysByLayoutName.iteritems():
+        overlay.release()
+      self.overlaysByLayoutName = None
+
 
   def onReload(self,moduleName="ModelDrawEffect"):
     """Generic reload method for any scripted module.
@@ -328,28 +376,27 @@ class ModelDrawEffectWidget:
 class SliceWebOverlay:
 
   def __init__(self,sliceView):
-    self.styleObserverTags = []
+    self.observerTags = []
     self.sliceView = sliceView
     self.addWebActor()
 
-  def __del__(self):
+  def release(self):
     # remove observers and reset
-    for observee,tag in self.styleObserverTags:
+    self.removeWebActor()
+    for observee,tag in self.observerTags:
       observee.RemoveObserver(tag)
-    self.styleObserverTags = []
+    self.observerTags = []
 
   def setHtml(self,html):
     self.webView.setHtml(html)
 
   def onLoadFinished(self,worked):
-    print('worked: %s' % worked)
     self.qImage.fill(0)
     self.webView.render(self.qImage)
     utils = slicer.qMRMLUtils()
     utils.qImageToVtkImageData(self.qImage,self.vtkImage)
     self.imageActor.SetInput(self.vtkImage)
     self.sliceView.scheduleRender()
-    print('requested Render')
 
   def processEvent(self, caller=None, event=None):
     htmlFormat = """
@@ -366,7 +413,9 @@ class SliceWebOverlay:
       </div> </BODY>
     """
     pos = self.style.GetEventPosition()
-    self.setHtml(htmlFormat % 'got %s from %s at %s' % (event,caller.GetClassName(),str(pos)))
+    s = 'got %s from %s at %s' % (event,caller.GetClassName(),str(pos))
+    s +='<br>size is %d by %d' % (self.sliceView.width,self.sliceView.height)
+    self.setHtml(htmlFormat % s)
     pass
 
   def addWebActor(self):
@@ -397,10 +446,10 @@ class SliceWebOverlay:
     #self.webView.page().connect('repaintRequested(QRect)', lambda rect : onLoadFinished(rect, self.webView, self.qImage) )
 
     self.style = self.sliceView.interactor()
-    events = ("MouseMoveEvent", "EnterEvent", "LeaveEvent", "ModifiedEvent",)
+    events = ("ModifiedEvent", "MouseMoveEvent", "EnterEvent", "LeaveEvent",)
     for event in events:
       tag = self.style.AddObserver(event, self.processEvent)
-      self.styleObserverTags.append([self.style,tag])
+      self.observerTags.append([self.style,tag])
 
   def removeWebActor(self):
     self.renderer.RemoveActor(self.actor2D)
@@ -465,14 +514,12 @@ class ModelDrawEffectTest(unittest.TestCase):
       self.test_ModelDrawEffect2()
 
   def onLoadFinished(self,worked):
-    print('worked: %s' % worked)
     self.qImage.fill(0)
     self.webView.render(self.qImage)
     utils = slicer.qMRMLUtils()
     utils.qImageToVtkImageData(self.qImage,self.vtkImage)
     self.imageActor.SetInput(self.vtkImage)
     self.threeDView.scheduleRender()
-    print('requested Render')
 
   def addWebActor(self):
     self.webView = qt.QWebView()
@@ -576,6 +623,7 @@ class ModelDrawEffectTest(unittest.TestCase):
     self.delayDisplay('Check them out!')
     
     for layoutName,overlay in overlaysByLayoutName.iteritems():
-      overlay.removeWebActor()
+      overlay.release()
+    overlaysByLayoutName = None
 
     self.delayDisplay('test_ModelDrawEffect2 passed!')

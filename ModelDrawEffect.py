@@ -403,20 +403,27 @@ class SliceWebOverlay:
     <HEAD></HEAD> <BODY>
       <div id="annotation"> <p style ="position: absolute;
                 display: inline;
-                top: 5;
-                left: 5;
+                top: %d;
+                left: %d;
                 border: 2px solid #777;
                 padding: 5px;
                 background-color: #fff;
                 opacity: 0.70" >
                 %s</p>
+
+<svg width="640" height="480" xmlns="http://www.w3.org/2000/svg"> <!-- Created with SVG-edit - http://svg-edit.googlecode.com/ --> <defs> <radialGradient id="svg_2" spreadMethod="pad"> <stop stop-color="#3f00ff" offset="0"/> <stop stop-color="#c0ff00" offset="1"/> </radialGradient> <linearGradient spreadMethod="pad" id="svg_5"> <stop stop-color="#3f00ff" offset="0"/> <stop stop-opacity="0.996094" stop-color="#7f0000" offset="0.737549"/> </linearGradient> </defs> <g> <title>Layer 1</title> <rect fill="url(#svg_5)" stroke="#000000" stroke-width="5" x="101" y="136" width="380" height="248" id="svg_1" fill-opacity="0.66" opacity="0.5"/> <path id="svg_4" d="m163,50l131,120l-129,101l-115,-65" opacity="0.5" fill-opacity="0.66" stroke-linecap="null" stroke-linejoin="null" stroke-dasharray="null" stroke-width="5" stroke="#000000" fill="url(#svg_2)"/> </g> </svg>
+
       </div> </BODY>
     """
-    pos = self.style.GetEventPosition()
-    s = 'got %s from %s at %s' % (event,caller.GetClassName(),str(pos))
+    viewW,viewH = self.sliceView.width,self.sliceView.height
+    imageW,imageH = self.qImage.width(),self.qImage.height()
+    if (viewW,viewH) != (imageW,imageH):
+      self.qImage = qt.QImage(viewW, viewH, qt.QImage.Format_ARGB32)
+    posX,posY = self.style.GetEventPosition()
+    posY = viewH - posY
+    s = 'got %s from %s' % (event,caller.GetClassName())
     s +='<br>size is %d by %d' % (self.sliceView.width,self.sliceView.height)
-    self.setHtml(htmlFormat % s)
-    pass
+    self.setHtml(htmlFormat % (posY,posX,s))
 
   def addWebActor(self):
     self.webView = qt.QWebView()
